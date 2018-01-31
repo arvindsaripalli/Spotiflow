@@ -5,8 +5,10 @@ import pprint
 import sys
 import numpy as np
 
+
 def get_distance(a, b):
     return np.linalg.norm(a - b)
+
 
 def remove_query_spaces(q):
     """
@@ -138,7 +140,7 @@ def user_login(scope):
     if len(sys.argv) > 1:
         username = sys.argv[1]
     else:
-        print("Usage: %s username" % (sys.argv[0],))
+        print("Usage: python %s [username]" % (sys.argv[0],))
         sys.exit(1)
 
     # Get API token with spotipy.
