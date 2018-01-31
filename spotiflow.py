@@ -6,7 +6,78 @@ import sys
 import numpy as np
 
 
+def create_new_playlist(sp, username, name, tracklist):
+    """
+    Creates a new playlist from a tracklist.
+
+    :param sp: Spotify auth object
+    :param username: Spotify username.
+    :param name: Name of the playlist name to be created.
+    :param tracklist: List of track ids to be added to the playlist.
+    """
+
+    # Create empty playlist.
+    sp.user_playlist_create(username, name, True)
+
+    # Get user's playlists.
+    playlists_result = sp.user_playlists(username)
+    new_playlist_id = None
+
+    # Look for new playlist.
+    for playlist in playlists_result['items']:
+        if playlist['name'] == name:
+            new_playlist_id = playlist['id']
+
+    # Add tracks to new playlist.
+    if new_playlist_id is not None:
+        sp.user_playlist_add_tracks(username, new_playlist_id, tracklist)
+
+    print(name, " created!\n")
+
+
+def order_tracks(playlist, track_features):
+    """
+    Returns a list of track ids that are sorted in order of closeness.
+
+    :param playlist: Dictionary of track names and ids.
+    :param track_features: Dicttionary of track features.
+    :return: (list) A list of track_ids ordered by closeness.
+    """
+
+    # Solution and remaining lists.
+    remaining = playlist.copy()
+    solution = []
+
+    # Get starting track, add it to the solution, and remove it
+    # from remaining tracks.
+    current = list(remaining.keys())[0]
+    del remaining[current]
+    solution.append(current)
+
+    # Iterate through the remaining elements.
+    for i in range(len(remaining)):
+        min_distance = -1
+        min_track = None
+
+        # Find the min track
+        for track in remaining:
+            distance = get_distance(np.array(track_features[current]),
+                                    np.array(track_features[track]))
+            if min_distance == -1 or min_distance > distance:
+                min_distance = distance
+                min_track = track
+
+        # Update current, add to solutions, and remove from remaining.
+        current = min_track
+        solution.append(current)
+        del remaining[current]
+    return solution
+
+
 def get_distance(a, b):
+    """
+    Returns the euclidean distance between two track features lists.
+    """
     return np.linalg.norm(a - b)
 
 
@@ -85,31 +156,36 @@ def get_track_features(track_id, sp):
 
 def pick_playlist(sp, username):
     """
-    Prompts for playlist to choose and returns the playlist id for that
-    playlist.
+    Prompts for playlist to choose and returns the playlist name and
+    id for that playlist.
 
     :param sp: Spotipy auth object.
     :param username: Spotify username.
-    :return: (str) The chosen playlist id.
+    :return: tuple (playlist, user_id)
+        WHERE
+        (list) playlist is the chosen playlist name and id.
+        (str) user_id is the id of the playlist owner.
     """
-
     # Grab user playlists created, followed, public, private, etc.
     playlists_result = sp.user_playlists(username)
     playlists = []
+    user_ids = []
     playlist_count = 0
 
     # Displays prompt.
     print("Pick a playlist: ")
     for playlist in playlists_result['items']:
-        if playlist['owner']['id'] == username:
-            playlist_count += 1
+        playlist_count += 1
 
-            # Add to playlists name and ids
-            playlist_id = playlist['id']
-            name = playlist['name']
-            playlists.append([name, playlist_id])
+        # Add to playlists name and ids
+        playlist_id = playlist['id']
+        name = playlist['name']
+        playlists.append([name, playlist_id])
 
-            print(str(playlist_count) + " " + name)
+        # Record owner of the playlist
+        user_ids.append(playlist['owner']['id'])
+
+        print(str(playlist_count) + " " + name)
 
     # Check if choice is valid
     chosen_playlist = int(input())
@@ -117,7 +193,7 @@ def pick_playlist(sp, username):
         print("That is not a valid choice. Please try again.")
         sys.exit(1)
 
-    return playlists[chosen_playlist - 1][1]
+    return playlists[chosen_playlist - 1], user_ids[chosen_playlist - 1]
 
 
 def user_login(scope):
@@ -155,7 +231,7 @@ def main():
     pp = pprint.PrettyPrinter(indent=2)
 
     # Read permissions for Spotify API.
-    scope = 'user-library-read'
+    scope = 'user-library-read playlist-modify-public'
 
     # Get user login information.
     token, username, keys = user_login(scope)
@@ -167,10 +243,12 @@ def main():
         track_genre = {}
 
         # Prompt user for playlist selection.
-        playlist_id = pick_playlist(sp, username)
+        playlist_id, playlist_owner_id = pick_playlist(sp, username)
+        playlist_name = playlist_id[0]
+        playlist_id = playlist_id[1]
 
         # Get playlist information from id.
-        playlist_result = sp.user_playlist_tracks(username, playlist_id=playlist_id)
+        playlist_result = sp.user_playlist_tracks(playlist_owner_id, playlist_id=playlist_id)
         playlist_result = playlist_result['items']
         print("Gathering features and genre...")
 
@@ -190,39 +268,20 @@ def main():
             # Get the genre of the track.
             # track_genre[track_id] = get_genres(name, artist, keys)
 
-        print("Done")
+        print("Done\n")
 
-        # Solution and remaining lists.
-        remaining = playlist.copy()
-        solution = []
+        # Order the tracks in the playlist.
+        new_tracklist = order_tracks(playlist, track_features)
 
-        # Get starting track, add it to the solution, and remove it
-        # from remaining tracks.
-        current = list(remaining.keys())[0]
-        del remaining[current]
-        solution.append(current)
+        # Prompt for creation of new playlist.
+        new_playlist_name = playlist_name + " - Improved"
+        should_create = input("Creating new public playlist '{}', continue? (y/n)  ".format(new_playlist_name))
 
-        # Iterate through the remaining elements.
-        for i in range(len(remaining)):
-            min_distance = -1
-            min_track = None
+        # Create playlist from new tracklist.
+        if should_create.lower() != "n" and should_create.lower() != "no":
+            create_new_playlist(sp, username, new_playlist_name, new_tracklist)
 
-            # Find the min track
-            for track in remaining:
-                distance = get_distance(np.array(track_features[current]),
-                                        np.array(track_features[track]))
-                if min_distance == -1 or min_distance > distance:
-                    min_distance = distance
-                    min_track = track
-
-            # Update current, add to solutions, and remove from remaining.
-            current = min_track
-            solution.append(current)
-            del remaining[current]
-
-        for id in solution:
-            print(playlist[id])
-
+        print("Thanks for using Spotiflow!")
 
 
 if __name__ == '__main__':
