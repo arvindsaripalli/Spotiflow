@@ -6,7 +6,7 @@ import sys
 import numpy as np
 
 
-def create_new_playlist(sp, username, name, tracklist):
+def create_new_playlist(sp, username, name, tracklist, playlist_size):
     """
     Creates a new playlist from a tracklist.
 
@@ -14,6 +14,7 @@ def create_new_playlist(sp, username, name, tracklist):
     :param username: Spotify username.
     :param name: Name of the playlist name to be created.
     :param tracklist: List of track ids to be added to the playlist.
+    :param playlist_size: The size of the playlist that is being created.
     """
 
     # Create empty playlist.
@@ -28,9 +29,13 @@ def create_new_playlist(sp, username, name, tracklist):
         if playlist['name'] == name:
             new_playlist_id = playlist['id']
 
-    # Add tracks to new playlist.
-    if new_playlist_id is not None:
-        sp.user_playlist_add_tracks(username, new_playlist_id, tracklist)
+    # Iterate over offset of playlist by track_size 100 to meet rate limit.
+    for i in range((playlist_size // 100) + 1):
+        sub_tracks = tracklist[(100 * i):(i * 100 + 100)]
+
+        # Add tracks to new playlist.
+        if new_playlist_id is not None and len(sub_tracks) > 0:
+            sp.user_playlist_add_tracks(username, new_playlist_id, sub_tracks)
 
     print(name, " created!\n")
 
@@ -71,6 +76,7 @@ def order_tracks(playlist, track_features):
         current = min_track
         solution.append(current)
         del remaining[current]
+
     return solution
 
 
@@ -165,11 +171,13 @@ def pick_playlist(sp, username):
         WHERE
         (list) playlist is the chosen playlist name and id.
         (str) user_id is the id of the playlist owner.
+        (int) track_size is the size of the playlist.
     """
     # Grab user playlists created, followed, public, private, etc.
     playlists_result = sp.user_playlists(username)
     playlists = []
     user_ids = []
+    track_sizes = []
     playlist_count = 0
 
     # Displays prompt.
@@ -182,9 +190,9 @@ def pick_playlist(sp, username):
         name = playlist['name']
         playlists.append([name, playlist_id])
 
-        # Record owner of the playlist
+        # Record owner of the playlist and size
         user_ids.append(playlist['owner']['id'])
-
+        track_sizes.append(playlist['tracks']['total'])
         print(str(playlist_count) + " " + name)
 
     # Check if choice is valid
@@ -193,7 +201,7 @@ def pick_playlist(sp, username):
         print("That is not a valid choice. Please try again.")
         sys.exit(1)
 
-    return playlists[chosen_playlist - 1], user_ids[chosen_playlist - 1]
+    return playlists[chosen_playlist - 1], user_ids[chosen_playlist - 1], track_sizes[chosen_playlist - 1]
 
 
 def user_login(scope):
@@ -243,13 +251,19 @@ def main():
         track_genre = {}
 
         # Prompt user for playlist selection.
-        playlist_id, playlist_owner_id = pick_playlist(sp, username)
+        playlist_id, playlist_owner_id, playlist_size = pick_playlist(sp, username)
         playlist_name = playlist_id[0]
         playlist_id = playlist_id[1]
 
-        # Get playlist information from id.
-        playlist_result = sp.user_playlist_tracks(playlist_owner_id, playlist_id=playlist_id)
-        playlist_result = playlist_result['items']
+        # Get tracks from the playlist, 100 at a time to meet rate limit.
+        playlist_result = []
+        for i in range((playlist_size // 100) + 1):
+            # Get playlist information from id.
+            temp_result = sp.user_playlist_tracks(playlist_owner_id, playlist_id=playlist_id, offset=i)
+            temp_result = temp_result['items']
+            playlist_result = playlist_result + temp_result
+        playlist_result = playlist_result[:playlist_size]
+
         print("Gathering features and genre...")
 
         # Add tracks to playlist dictionary and get features
@@ -270,6 +284,12 @@ def main():
 
         print("Done\n")
 
+        # Clean track features of empty features.
+        for track in track_features:
+            if track_features[track] is None:
+                del playlist[track]
+        print(len(track_features))
+
         # Order the tracks in the playlist.
         new_tracklist = order_tracks(playlist, track_features)
 
@@ -279,7 +299,7 @@ def main():
 
         # Create playlist from new tracklist.
         if should_create.lower() != "n" and should_create.lower() != "no":
-            create_new_playlist(sp, username, new_playlist_name, new_tracklist)
+            create_new_playlist(sp, username, new_playlist_name, new_tracklist, playlist_size)
 
         print("Thanks for using Spotiflow!")
 
